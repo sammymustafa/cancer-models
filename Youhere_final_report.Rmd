@@ -1,0 +1,170 @@
+---
+title: "Final Project Report"
+subtitle: "Data Science 3 with R (STAT 301-3)"
+author: "Sia Cho, Sammy Mustafa, and Chloe Sokol"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    highlight: "tango"
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE)
+```
+
+```{r, echo=FALSE, message=FALSE}
+library(tidyverse)
+library(skimr)
+library(naniar)
+library(patchwork)
+library(corrplot)
+```
+
+## The Dataset and Research Question
+<br>
+This dataset documents information on cancer death rates for every county in the United States. The dataset was found on Data World, uploaded by Noah Rippner as a challenge to predict the outcome variable, `TARGET_deathRate` (mean per capita (100,000) cancer mortalities). The link to his project page is here: https://data.world/nrippner/ols-regression-challenge. In his description he cites contributions of his aggregated data set from the American Community Survey (census.gov), clinicaltrials.gov, and cancer.gov. The dataset was downloaded from Data World as a csv file. Within the data set there are 3047 observations for 33 feature variables and 1 target variable, `TARGET_deathRate` (Mean per capita (100,000) cancer mortalities).
+<br><br>
+Cancer is a leading cause of death worldwide. While there are certain lifestyle choices that may lead to different cancers, some are inherited, and others occur by chance. The purpose of modeling data with this set of variables zooms out from trying to predict cancer on individuals, to widespread trends across the counties of the United States. This is why regression modeling with data on cancer mortalities is possible. The natural regression research question for this data set is what model is best for predicting on the outcome variable, `TARGET_deathRate`? A good model will have a low RMSE value for this target variable as well as a low standard error.
+
+## An Exploratory Data Analysis
+<br>
+A more detailed EDA for this data set can be found in the Youhere_EDA.rmd or Youhere_EDA.html file. Below is an abbreviated version for the purposes of this report.
+<br><br>
+Within the data set there are 3047 observations for 33 feature variables and 1 target variable, `TARGET_deathRate` (Mean per capita (100,000) cancer mortalities). 
+<br>
+
+```{r, echo=FALSE}
+cancer <- read_csv("data/cancer_reg.csv")
+
+skim_without_charts(cancer)
+```
+<br>
+Only 3 variables are missing any observations: `PctSomeCol18_24` (2285 missing), `PctEmployed16_Over` (152 missing), `PctPrivateCoverageAlone` (609 missing). `PctSomeCol18_24` is missing about 75% of its observations and should be removed as a variable used in prediction. `PctEmployed16_Over` is missing about 5% of its observations and `PctPrivateCoverageAlone` about 20%, so we can use imputation methods to fix the missingness problem. 
+<br>
+```{r, echo=FALSE}
+miss_var_summary(cancer)
+```
+<br>
+```{r, echo = FALSE}
+p1 <- ggplot(cancer, aes(x = TARGET_deathRate)) + geom_density()
+p2 <- ggplot(cancer, aes(x = TARGET_deathRate)) + geom_boxplot() + theme_void()
+p2/p1
+```
+<br>
+From this plot of the target variable, we can see that it is not heavily skewed enough to need a transformation.
+<br><br>
+It is essential to identify which variables may be heavily involved in the process of developing an accurate and precise model to predict `TARGET_deathRate`. To more accurately find patterns and associations between variables, we used a correlation plot. It is important to note that variable with missing data (`PctPrivateCoverageAlone` and `PctEmployed16_Over`) are not represented in the correlation plot and are independently explored. `PctSomeCol18_24` is not explored in this EDA due to its extreme extent of missingness. It will not be considered in our future recipe(s).
+<br>
+```{r, echo = FALSE}
+correlation_variables <- select(cancer, TARGET_deathRate, avgAnnCount, avgDeathsPerYear, incidenceRate, medIncome, popEst2015, povertyPercent, studyPerCap, MedianAge, MedianAgeMale, MedianAgeFemale, AvgHouseholdSize, PercentMarried, PctNoHS18_24, PctHS18_24, PctBachDeg18_24, PctHS25_Over, PctBachDeg25_Over, PctUnemployed16_Over, PctPrivateCoverage, PctEmpPrivCoverage, PctPublicCoverage, PctPublicCoverageAlone, PctWhite, PctBlack, PctAsian, PctOtherRace, PctMarriedHouseholds, BirthRate)
+
+cor.mtest <- function(mat, ...) {
+    mat <- as.matrix(mat)
+    n <- ncol(mat)
+    p.mat<- matrix(NA, n, n)
+    diag(p.mat) <- 0
+    for (i in 1:(n - 1)) {
+        for (j in (i + 1):n) {
+            tmp <- cor.test(mat[, i], mat[, j], ...)
+            p.mat[i, j] <- p.mat[j, i] <- tmp$p.value
+        }
+    }
+  colnames(p.mat) <- rownames(p.mat) <- colnames(mat)
+  p.mat
+}
+
+# matrix of the p-value of the correlation
+matrix <- cor.mtest(correlation_variables)
+```
+
+```{r, fig.width = 8, fig.height = 8, fig.align = "center", echo = FALSE}
+corrplot(cor(correlation_variables), method = "shade", type = "lower", diag = FALSE, tl.col = "black", tl.srt = 45, p.mat = matrix, sig.level = 0.05, insig = "blank")
+```
+<br>
+From the correlation plot above, we could identify variables that may have patterns aligning with that of the target variable `TARGET_deathRate`; the first column serves to identify this association. Here, the blue squares refer to predictor variables with perfectly positive linear correlation with the response variable while the red squares correspond to predictor variables with perfectly negative linear correlation with the response variable. From this, we can see that `povertyPercent`, `PctHS25_Over`, `PctUnemployed16_Over`, `PctPublicCoverage`, and `PctPublicCoverageAlone` are most notably positively correlated with `TARGET_deathRate`. By contrast, the predictor variables negatively correlated with the response variable are `medIncome`, `PctBachDeg25_Over`, and `PctPrivateCoverage`. However, it is important that only numerical variables could be explored using the correlation plot, meaning categorical/nominal predictor variables are continued to be explored and utilized in our model and recipe on the training data set. 
+<br>
+
+## Attempted Models - Round 1
+<br>
+The first recipe predicted the outcome variable predicted by all other variables except `Geography` because it would result in too many dummy variables and `PctSomeCol18_24` because there was too much missing data. As decided through the use of bivariate exploration in our full EDA, we decided to use impute `PctEmployed16_Over` linearly with `PctUnemployed16_Over` because they have a strong negative relationship. The same was true with linearly imputing `PctPrivateCoverageAlone` with `PctPublicCoverage`. We created new value assignments for novel levels in all nominal predictors as well as applying dummy encoding (not one-hot) to those nominal predictors as well. We included all two way interactions with the target variable. Lastly we removed all predictors with zero variance and normalized all numeric predictors. 
+<br><br>
+The 8 models fitted to the training data set were a support vector machine (radial basis function) with `cost` and `rbf_sigma` tuned; a support vector machine (polynomial) with `cost`, `degree`, and `scale_factor` tuned; a random forest model with `min_n` and `mtry` tuned; a single Layer Neural Network (multilayer perceptron) with `hidden_units` and `penalty` tuned; a MARS model with `prod_degree` and `num_terms` tuned; a simple linear regression model; a nearest neighbors model with `neighbors` tuned; and a boosted tree model with `mtry`, `min_n`, and `learn_rate` tuned. All models except the basic linear regression model utilized tuning to find the most optimal parameters. 
+<br><br>
+Through a tuning process that occurred over cross-validation with 5 folds with 3 repeats and strata set to the outcome variable, the optimal boosted tree model had `mtry=264` and `min_n=21` and `learn_rate=0.1`, the optimal nearest neighbors model had `neighbors=15`, the optimal neural net model had `hidden_units=1` and `penalty=1`, the optimal MARS model had `num_terms=5` and `prod_degree=2`, the optimal random forest model had `mtry=264` and `min_n=2`,  the optimal svm poly had `cost=0.177` and `degree=1` and `scale_factor=0.1`, and the optimal svm rbf had `cost=32` and `rbf_sigma=0.00001`. Each optimal model for boosted tree, nearest neighbors, linear regression, MARS, neural net, random forest model, svm poly, and svm rbf resulted in a mean RMSE metric across folds of 42.1, 21.3, 333, 20.0, 24.4, 18.7, 19.4, and 19.4 respectively. With the lowest mean value of RMSE across folds, the optimal random forest model had `mtry=264` and `min_n=2` was the best performing model as shown below.
+
+```{r, eval=FALSE}
+load(file="results/rand_forest_tuned.rda")
+autoplot(rand_forest_tuned, metric = "rmse")
+ggsave("rf_autoplot.png")
+```
+
+![Random Forest RMSE Autoplot.](images/rf_autoplot.png)
+<br>
+The number of models tuned with the second recipe was then cut down from 8 to 5 based on the 5 lowest RMSE values from this model. These 5 models were the random forest model, svm poly, svm rbf, MARS, and nearest neighbors model. <br>
+
+## Attempted Models - Round 2
+<br>
+The second recipe predicted the outcome variable predicted by all other variables except `Geography` because it would result in too many dummy variables and `PctSomeCol18_24` because there was too much missing data. As decided through the use of bivariate exploration in our full EDA, we decided to use impute `PctEmployed16_Over` by nearest neighbors with `PctUnemployed16_Over` because they have a strong negative relationship. The same was true with nearest neighbors imputing `PctPrivateCoverageAlone` with `PctPublicCoverage`. We created new value assignments for novel levels in all nominal predictors as well as applying dummy encoding (with one-hot) to those nominal predictors as well. We included all two way interactions with the target variable. Lastly we removed all predictors with zero variance and near zero variance and normalized all numeric predictors. We decided to change the linear impuitation to nearest neighbors because on a previous lab, that impiutation worked the best. Additionally we included one hot dummy encoding because the random forest model was still in the running and it is very sensitive to dummy encodoing. Lastly, we added the removal of near zero variance predictors in addition to just the removal of zero variance predictors because there were a lot of new predictors created through interactions and dummy encoding, so there were expected to be some near zero variance predictors created that were not lowering the RMSE value, and only adding time onto tuning.
+<br><br>
+The 5 models fitted to the training data set were a support vector machine (radial basis function) with `cost` and `rbf_sigma` tuned; a support vector machine (polynomial) with `cost`, `degree`, and `scale_factor` tuned; a random forest model with `min_n` and `mtry` tuned; a MARS model with `prod_degree` and `num_terms` tuned; and a nearest neighbors model with `neighbors` tuned. All models utilized tuning to find the most optimal parameters. 
+<br><br>
+Through a tuning process that occurred over cross-validation with 5 folds with 3 repeats and strata set to the outcome variable, the optimal nearest neighbors model had `neighbors=15`, the optimal MARS model had `num_terms=5` and `prod_degree=1`, the optimal random forest model had `mtry=527` and `min_n=2`,  the optimal svm poly had `cost=0.177` and `degree=1` and `scale_factor=0.1`, and the optimal svm rbf had `cost=32` and `rbf_sigma=0.00001`. Each optimal model for nearest neighbors, MARS, random forest model, svm poly, and svm rbf resulted in a mean RMSE metric across folds of 21.3, 20.0, 18.7, 19.4, and 19.4 respectively. Though some of the optimal tuning parameters changed, the resulting RMSE values for each of these 5 models were the same as when they were tuned with the first recipe. With the lowest mean value of RMSE across folds, the optimal random forest model had `mtry=527` and `min_n=2` was the best performing model as shown below.
+<br>
+
+```{r, eval=FALSE}
+load(file="results/rand_forest2_tuned.rda")
+autoplot(rand_forest2_tuned, metric = "rmse")
+ggsave("rf2_autoplot.png")
+```
+
+![Random Forest 2 RMSE Autoplot.](images/rf2_autoplot.png)
+<br>
+The number of models tuned with the third recipe was then cut down from 5 to 3 based on the 3 lowest RMSE values from this model. These 3 models were the random forest model, svm poly, and svm rbf. 
+<br>
+
+## Attempted Models - Round 3
+<br>
+The second recipe predicted the outcome variable predicted by all other variables except `Geography` because it would result in too many dummy variables and `PctSomeCol18_24` because there was too much missing data. Additionally, we removed `studyPerCap`, `MedianAge`, `MedianAgeMale`, `MedianAgeFemale`, `AvgHouseholdSize` because in our initial correlation plot, they had near zero relationship with out outcome variable and therefore were not good predictors. As decided through the use of bivariate exploration in our full EDA, we decided to use impute `PctEmployed16_Over` by nearest neighbors with `PctUnemployed16_Over` because they have a strong negative relationship. The same was true with nearest neighbors imputing `PctPrivateCoverageAlone` with `PctPublicCoverage`. We created new value assignments for novel levels in all nominal predictors as well as applying dummy encoding (with one-hot) to those nominal predictors as well. We included all two way interactions with the target variable. Lastly we removed all predictors with zero variance and near zero variance and normalized all numeric predictors. We decided to change the linear impuitation to nearest neighbors because on a previous lab, that impiutation worked the best. Additionally we included one hot dummy encoding because the random forest model was still in the running and it is very sensitive to dummy encodoing. Lastly, we added the removal of near zero variance predictors in addition to just the removal of zero variance predictors because there were a lot of new predictors created through interactions and dummy encoding, so there were expected to be some near zero variance predictors created that were not lowering the RMSE value, and only adding time onto tuning.
+<br><br>
+The 3 models fitted to the training data set were a support vector machine (radial basis function) with `cost` and `rbf_sigma` tuned; a support vector machine (polynomial) with `cost`, `degree`, and `scale_factor` tuned; and a random forest model with `min_n` and `mtry` tuned. All models utilized tuning to find the most optimal parameters. 
+<br><br>
+Through a tuning process that occurred over cross-validation with 5 folds with 3 repeats and strata set to the outcome variable, the optimal random forest model had `mtry=527` and `min_n=2`, the optimal svm poly had `cost=0.177` and `degree=1` and `scale_factor=0.1`, and the optimal svm rbf had `cost=32` and `rbf_sigma=0.00001`. Each optimal model for random forest model, svm poly, and svm rbf resulted in a mean RMSE metric across folds of 18.7, 19.2, and 19.4 respectively. Though none of the optimal tuning parameters changed, the resulting RMSE value of svm poly went down by 0.2, though there was no chnge in RMSE for the other two models. With the lowest mean value of RMSE across folds, the optimal random forest model had `mtry=527` and `min_n=2` was the best performing model as shown below.
+<br>
+```{r, eval=FALSE}
+load(file="results/rand_forest3_tuned.rda")
+autoplot(rand_forest3_tuned, metric = "rmse")
+ggsave("rf3_autoplot.png")
+```
+
+![Random Forest 3 RMSE Autoplot.](images/rf3_autoplot.png)
+<br>
+
+## The Final Model
+<br>
+The final model was, thus, determined to be the random forest model with `mtry=527` and `min_n=2` and our final recipe; however, it was interesting to see that this model had the same RMSE value of 18.7 with all three recipes. With this, the final model was fit to the training data set and then used to predict on the testing data set, there was a resulting RMSE value of 17.7976, which is lower than the 18.7 from the testing set. 
+<br>
+```{r}
+load(file="results/rand_forest3_FINAL.rda")
+rmse_table
+```
+<br>
+When broken down by each individual value of `TARGET_deathRate` predicted, we can see that the predicted values are quites close to the actual values. For the first three real values of `TARGET_deathRate` in the testing set, 164.9, 161.3, and 194.8, we have predictions 164.5355, 159.0605, and 185.2283. While they range in accuracy, they are all pretty close, and considering we are trying to predict on counties of the Unites States, where each one can be wildly different from another county, the results are better than expected. 
+<br>
+```{r}
+load(file="results/rand_forest3_FINAL.rda")
+rmse_table2_predictions
+```
+
+## Next Steps
+<br>
+The random forest model, the final model chosen for this project, is effective for both regression and classification problems. It is a very flexible model that worked very well on our large data set and is known for a high degree of accuracy. What is most important about this model is that because of the robust number of decision trees in a random forest, the model will not overfit since the averaging of uncorrelated trees lowers the overall variance and prediction error. This is important because decision tree models are at risk of overfitting because fit all the samples in the training set tightly.
+<br><br>
+Additional data resources that would help improve the performance of the model include testing other recipes. The correlation plot of the EDA data set showed all relationships between predictor variables and the outcome variable, as well as between predictor variables. A deeper look into the correlation plot to not only remove variables that had 0 relationship with the outcome variable, as was done in recipe 3, but variables with small reltionships to the outcome variable could potentially yield a lower RMSE. With infinite time, we could test a new recipe for each combination of predictors to get the highets performing set in our recipe. These ideas are derived from the new research question of what predictors work best for the prediction of our outcome variable, `TARGET_deathRate`.
+<br>
+
+## Github Repo Link
+[https://github.com/STAT301III/final-project-youhere.git](https://github.com/STAT301III/final-project-youhere.git){target="_blank"}
+
+

@@ -1,0 +1,340 @@
+---
+title: "Final Project EDA"
+subtitle: "Data Science 3 with R (STAT 301-3)"
+author: "Sia Cho, Sammy Mustafa, and Chloe Sokol"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    highlight: "tango"
+    code_folding: hide
+---
+
+```{r global-settings, include=FALSE}
+knitr::opts_chunk$set(
+  warning = FALSE, message = FALSE, echo = FALSE
+)
+```
+
+```{r, echo=FALSE}
+library(tidyverse)
+library(skimr)
+library(naniar)
+library(patchwork)
+library(corrplot)
+```
+
+## Initial overview of data
+<br>
+This dataset documents information on cancer death rates for every county in the United States. The dataset was found on Data World, uploaded by Noah Rippner as a challenge to predict the outcome variable, `TARGET_deathRate` (mean per capita (100,000) cancer mortalities). The link to his project page is here: https://data.world/nrippner/ols-regression-challenge. In his description he cites contributions of his aggregated data set from the American Community Survey (census.gov), clinicaltrials.gov, and cancer.gov. The dataset was downloaded from Data World as a csv file and uploaded to this Rmd file as seen above. 
+
+<br><br>
+```{r, echo=FALSE}
+cancer <- read_csv("data/cancer_reg.csv")
+skim_without_charts(cancer)
+
+miss_var_summary(cancer)
+```
+<br><br>
+Within the data set there are 3047 observations for 33 feature variables and 1 target variable, `TARGET_deathRate` (Mean per capita (100,000) cancer mortalities). Only 3 variables are missing any observations: `PctSomeCol18_24` (2285 missing), `PctEmployed16_Over` (152 missing), `PctPrivateCoverageAlone` (609 missing). `PctSomeCol18_24` is missing about 75% of its observations and should be removed as a variable used in prediction. `PctEmployed16_Over` is missing about 5% of its observations and `PctPrivateCoverageAlone` about 20%, so we can use imputation methods to fix the missingness problem. 
+<br>
+```{r, echo =FALSE}
+p1 <- ggplot(cancer, 
+       aes(x = PctEmployed16_Over, 
+           y = PctBlack)) + 
+  geom_miss_point()
+
+p2 <- ggplot(cancer, 
+       aes(x = PctEmployed16_Over, 
+           y = PctWhite)) + 
+  geom_miss_point()
+
+p3 <- ggplot(cancer, 
+       aes(x = PctEmployed16_Over, 
+           y = PctAsian)) + 
+  geom_miss_point()
+
+p4 <- ggplot(cancer, 
+       aes(x = PctEmployed16_Over, 
+           y = PctOtherRace)) + 
+  geom_miss_point()
+
+(p1+p2)/(p3+p4)
+```
+<br><br>
+Most of the missing data for `PctEmployed16_Over` occurs when there is a large value of `PctWhite`. There is a noticeable amount of missing values for middle values of `PctBlack` and a very small amount of missing values for small values of `PctAsian`.
+<br><br>
+```{r, echo=FALSE}
+p1 <- ggplot(cancer, 
+       aes(x = PctPrivateCoverageAlone, 
+           y = PctBlack)) + 
+  geom_miss_point()
+
+p2 <- ggplot(cancer, 
+       aes(x = PctPrivateCoverageAlone, 
+           y = PctWhite)) + 
+  geom_miss_point()
+
+p3 <- ggplot(cancer, 
+       aes(x = PctPrivateCoverageAlone, 
+           y = PctAsian)) + 
+  geom_miss_point()
+
+p4 <- ggplot(cancer, 
+       aes(x = PctPrivateCoverageAlone, 
+           y = PctOtherRace)) + 
+  geom_miss_point()
+
+(p1+p2)/(p3+p4)
+```
+<br><br>
+There is a similar trend for missingness in `PctPrivateCoverageAlone`. Most of the missing data occurs when there is a large value of `PctWhite`. There is a noticeable amount of missing values for middle values of `PctBlack` and a very small amount of missing values for small values of `PctAsian`.
+<br><br>
+```{r, echo=FALSE}
+p1 <- ggplot(cancer, 
+       aes(x = PctPrivateCoverageAlone, 
+           y = medIncome)) + 
+  geom_miss_point()
+
+p2 <- ggplot(cancer, 
+       aes(x = PctEmployed16_Over, 
+           y = medIncome)) + 
+  geom_miss_point()
+
+p1 + p2
+```
+<br><br>
+Additionally, most of the missing values for these same two variables occur with lower values of `medIncome`. 
+<br>
+```{r, echo=FALSE}
+p1 <- cancer %>% 
+  filter(MedianAge < 70) %>%
+  ggplot(aes(x = PctEmployed16_Over, 
+           y = MedianAge)) + 
+  geom_miss_point()
+
+p2 <- cancer %>% 
+  filter(MedianAge < 70) %>%
+  ggplot(aes(x = PctPrivateCoverageAlone, 
+           y = MedianAge)) + 
+  geom_miss_point()
+
+p1 + p2
+```
+<br><br>
+The missingness is concentrated between values of 30 and 50 for `MedianAge`.
+<br>
+
+## Essential Findings 
+
+
+### Univariate: Response Variable
+```{r, echo = FALSE}
+p1 <- ggplot(cancer, aes(x = TARGET_deathRate)) + geom_density()
+p2 <- ggplot(cancer, aes(x = TARGET_deathRate)) + geom_boxplot() + theme_void()
+p2/p1
+```
+
+
+### Important Predictor Variables
+It is essential to identify which variables may be heavily involved in the process of developing an accurate and precise model to predict `TARGET_deathRate`. One method to approach this includes simply analyzing the data and predicting which variables have the greatest association with the response variable. While we hypothesized that factors like income, insurance, and race may be heavily involved in predicting cancer mortalities, there are methods to more accurately find patterns and associations between variables. One of which includes the correlation plot. It is important to note that variable with missing data (`PctPrivateCoverageAlone` and `PctEmployed16_Over`) are not represented in the correlation plot and are independently explored. `PctSomeCol18_24` is not explored in this EDA due to its extreme extent of missingness. It will not be considered in our future recipe(s).
+
+```{r, echo = FALSE}
+correlation_variables <- select(cancer, TARGET_deathRate, avgAnnCount, avgDeathsPerYear, incidenceRate, medIncome, popEst2015, povertyPercent, studyPerCap, MedianAge, MedianAgeMale, MedianAgeFemale, AvgHouseholdSize, PercentMarried, PctNoHS18_24, PctHS18_24, PctBachDeg18_24, PctHS25_Over, PctBachDeg25_Over, PctUnemployed16_Over, PctPrivateCoverage, PctEmpPrivCoverage, PctPublicCoverage, PctPublicCoverageAlone, PctWhite, PctBlack, PctAsian, PctOtherRace, PctMarriedHouseholds, BirthRate)
+
+cor.mtest <- function(mat, ...) {
+    mat <- as.matrix(mat)
+    n <- ncol(mat)
+    p.mat<- matrix(NA, n, n)
+    diag(p.mat) <- 0
+    for (i in 1:(n - 1)) {
+        for (j in (i + 1):n) {
+            tmp <- cor.test(mat[, i], mat[, j], ...)
+            p.mat[i, j] <- p.mat[j, i] <- tmp$p.value
+        }
+    }
+  colnames(p.mat) <- rownames(p.mat) <- colnames(mat)
+  p.mat
+}
+
+# matrix of the p-value of the correlation
+matrix <- cor.mtest(correlation_variables)
+```
+
+```{r, fig.width = 8, fig.height = 8, fig.align = "center", echo = FALSE}
+corrplot(cor(correlation_variables), method = "shade", type = "lower", diag = FALSE, tl.col = "black", tl.srt = 45, p.mat = matrix, sig.level = 0.05, insig = "blank")
+```
+From the correlation plot above, we could identify variables that may have patterns aligning with that of the target variable `TARGET_deathRate`; the first column serves to identify this association. Here, the blue squares refer to predictor variables with perfectly positive linear correlation with the response variable while the red squares correspond to predictor variables with perfectly negative linear correlation with the response variable. From this, we can see that `povertyPercent`, `PctHS25_Over`, `PctUnemployed16_Over`, `PctPublicCoverage`, and `PctPublicCoverageAlone` are most notably positively correlated with `TARGET_deathRate`. By contrast, the predictor variables negatively correlated with the response variable are `medIncome`, `PctBachDeg25_Over`, and `PctPrivateCoverage`. 
+
+These data make sense when you extend off the numerical data and understand what the variables truly mean. The positive predictor variables generally correspond to characteristics tying back to or a result of low income: poverty, low level of education, unemployment, and government-provided insurance. Another notable but less positive predictor variable is `PctBlack` in which factors like the systematic racism faced may place them in conditions that are not ideal or makes it hard for them to get tested and receive treatment. This is also a consistent trend in the negatively correlated predictor variables: a higher income, better education, and private more extensive insurance plan helps prevent as well as treat cancer, leading to better outcomes of less cancer mortalities.
+<br><br>
+
+It is also interesting to utilize the correlation plot to identify relationships that exist between predictor variables. While certain relationships are more obvious, such as a higher income leading to a higher degree of education and a lower degree of government-provided healthcare, there are patterns between variables that may not be well known.
+
+```{r}
+ggplot(cancer, aes(medIncome, PctBachDeg25_Over, color = PctPublicCoverage)) +
+  geom_point(alpha = 0.7) + 
+  geom_smooth(method = "lm", span = 0.3, color = "green", fill = "red")
+```
+
+```{r}
+race <- pivot_longer(cancer, c("PctWhite", "PctBlack"), names_to = "race", values_to = "RacePercent")
+ggplot(race, aes(PercentMarried, RacePercent)) +
+  geom_point(alpha = 0.7) + 
+  geom_smooth(method = "lm", span = 0.3, color = "green", fill = "red") +
+  facet_wrap(~race)
+```
+
+From the data above, it is clear to see the contrasting association between marriage rates and race. While it is negative correlated among black people, it is positively correlated in white people. While this simply may be an observed trend due to the small sample size we are working with in which observations were taken from single black individuals and married white individuals, it may be important to keep in mind when developing models to predict the response variable.
+<br><br>
+
+## Secondary Findings
+Standard variable explorations for the domain area that are unsurprising and mainly conducted out of convention. 
+Findings that don't seem interesting or important, but show some potential.
+
+### Univariate: Positive Predictors
+```{r}
+# povertyPercent
+p1 <- ggplot(cancer, aes(povertyPercent)) + geom_density()
+p2 <- ggplot(cancer, aes(povertyPercent)) + geom_boxplot() + theme_void()
+p2/p1
+
+# PctHS25_Over
+p1 <- ggplot(cancer, aes(PctHS25_Over)) + geom_density()
+p2 <- ggplot(cancer, aes(PctHS25_Over)) + geom_boxplot() + theme_void()
+p2/p1
+
+# PctUnemployed16_Over
+p1 <- ggplot(cancer, aes(PctUnemployed16_Over)) + geom_density()
+p2 <- ggplot(cancer, aes(PctUnemployed16_Over)) + geom_boxplot() + theme_void()
+p2/p1
+
+# PctPublicCoverage
+p1 <- ggplot(cancer, aes(PctPublicCoverage)) + geom_density()
+p2 <- ggplot(cancer, aes(PctPublicCoverage)) + geom_boxplot() + theme_void()
+p2/p1
+
+# PctPublicCoverageAlone
+p1 <- ggplot(cancer, aes(PctPublicCoverageAlone)) + geom_density()
+p2 <- ggplot(cancer, aes(PctPublicCoverageAlone)) + geom_boxplot() + theme_void()
+p2/p1
+
+```
+<br><br>
+For `povertyPercent`, `PctHS25_Over`, `PctUnemployed16_Over`, `PctPublicCoverage`, and `PctPublicCoverageAlone`, both the boxplot and density plots above show the distribution of the strong positive predictor variables that do not need to be transformed in any way such as, for example, with log transformations. They can be used as is for predicting.
+
+### Bivariate: Positive Predictors
+```{r}
+p1 <- ggplot(cancer, aes(TARGET_deathRate, povertyPercent)) +
+  geom_point(alpha = 0.7) + 
+  geom_smooth(method = "lm", span = 0.3, color = "green", fill = "red")
+p2 <- ggplot(cancer, aes(TARGET_deathRate, PctHS25_Over)) +
+  geom_point(alpha = 0.7) + 
+  geom_smooth(method = "lm", span = 0.3, color = "green", fill = "red")
+p3 <- ggplot(cancer, aes(TARGET_deathRate, PctUnemployed16_Over)) +
+  geom_point(alpha = 0.7) + 
+  geom_smooth(method = "lm", span = 0.3, color = "green", fill = "red")
+p4 <- ggplot(cancer, aes(TARGET_deathRate, PctPublicCoverage)) +
+  geom_point(alpha = 0.7) + 
+  geom_smooth(method = "lm", span = 0.3, color = "green", fill = "red")
+p5 <- ggplot(cancer, aes(TARGET_deathRate, PctPublicCoverageAlone)) +
+  geom_point(alpha = 0.7) + 
+  geom_smooth(method = "lm", span = 0.3, color = "green", fill = "red")
+(p1 + p2 + p3) / (p4 + p5)
+```
+<br>
+The graphs above support the strong positive relationship between `povertyPercent`, `PctHS25_Over`, `PctUnemployed16_Over` , `PctPublicCoverage`, `PctPublicCoverageAlone`, and `TARGET_deathRate` that was seen in the correlation plot. 
+
+```{r}
+p1 <- cancer %>%
+  filter(avgDeathsPerYear < 6000) %>%
+  ggplot(aes(avgDeathsPerYear, popEst2015)) +
+  geom_point(alpha = 0.7) + 
+  geom_smooth(method = "lm", span = 0.3, color = "green", fill = "red")
+
+p2 <- cancer %>%
+  filter(avgAnnCount < 20000) %>%
+  ggplot(aes(avgAnnCount, avgDeathsPerYear)) +
+  geom_point(alpha = 0.7) + 
+  geom_smooth(method = "lm", span = 0.3, color = "green", fill = "red")
+
+p1 + p2
+```
+<br><br>
+These two plots represent the two most positive relationships from the correlation plot. They both show naturally occurring relationships, as a larger population results in more cancer-related deaths, even if it is at the same rate as a smaller population. Similarly, a higher number of reported cancer cases per year will naturally correlate with a higher cancer-related mortality rate.
+
+### Univariate: Negative Predictors
+```{r}
+# Negative Predictors
+
+# medIncome
+p1 <- ggplot(cancer, aes(medIncome)) + geom_density()
+p2 <- ggplot(cancer, aes(medIncome)) + geom_boxplot() + theme_void()
+p2/p1
+
+# PctBachDeg25_Over
+p1 <- ggplot(cancer, aes(PctBachDeg25_Over)) + geom_density()
+p2 <- ggplot(cancer, aes(PctBachDeg25_Over)) + geom_boxplot() + theme_void()
+p2/p1
+
+# PctPrivateCoverage
+p1 <- ggplot(cancer, aes(PctPrivateCoverage)) + geom_density()
+p2 <- ggplot(cancer, aes(PctPrivateCoverage)) + geom_boxplot() + theme_void()
+p2/p1
+```
+<br><br>
+For `medIncome`, `PctBachDeg25_Over`, and `PctPrivateCoverage`, both the boxplot and density plots above show the distribution of the strong negative predictor variables that do not need to be transformed in any way such as, for example, with log transformations. They can be used as is for predicting.
+
+### Bivariate: Negative Predictors
+```{r}
+p1 <- ggplot(cancer, aes(TARGET_deathRate, medIncome)) +
+  geom_point(alpha = 0.7) + 
+  geom_smooth(method = "lm", span = 0.3, color = "green", fill = "red")
+p2 <- ggplot(cancer, aes(TARGET_deathRate, PctBachDeg25_Over)) +
+  geom_point(alpha = 0.7) + 
+  geom_smooth(method = "lm", span = 0.3, color = "green", fill = "red")
+p3 <- ggplot(cancer, aes(TARGET_deathRate, PctPrivateCoverage)) +
+  geom_point(alpha = 0.7) + 
+  geom_smooth(method = "lm", span = 0.3, color = "green", fill = "red")
+(p1 + p2 + p3)
+```
+<br><br>
+The graphs above support the strong negative relationship between `medIncome`, `PctBachDeg25_Over`, `PctPrivateCoverage` and `TARGET_deathRate` that was seen in the correlation plot. 
+
+```{r}
+p1 <- ggplot(cancer, aes(PctPrivateCoverage, PctPublicCoverageAlone)) +
+  geom_point(alpha = 0.7) + 
+  geom_smooth(method = "lm", span = 0.3, color = "green", fill = "red")
+
+p2 <- ggplot(cancer, aes(PctWhite, PctBlack)) +
+  geom_point(alpha = 0.7) + 
+  geom_smooth(method = "lm", span = 0.3, color = "green", fill = "red")
+
+p1 + p2
+```
+<br><br>
+These two plots represent the two most negative relationships from the correlation plot. They both show naturally occurring relationships, as a high percent of private coverage means a low percent of reliance on government assistance. Similarly, a high percent of county population identifying as white means a low percent of county population identifying as another race, such as black. 
+
+```{r}
+ggplot(cancer, aes(PctPrivateCoverageAlone, PctPublicCoverage)) +
+  geom_point(alpha = 0.7) + 
+  geom_smooth(method = "lm", span = 0.3, color = "green", fill = "red")
+```
+<br><br>
+Since `PctPrivateCoverageAlone` is missing 20% of its data, we independently explored variables that we though would have a strong naturally occurring relationship with `PctPrivateCoverageAlone`, such as `PctPublicCoverage`. The plot above shows a strong negative relationship that could be utilized for an imputation step in a future recipe.
+
+```{r}
+ggplot(cancer, aes(PctEmployed16_Over, PctUnemployed16_Over)) +
+  geom_point(alpha = 0.7) + 
+  geom_smooth(method = "lm", span = 0.3, color = "green", fill = "red")
+```
+<br><br>
+Since `PctEmployed16_Over` is missing 5% of its data, we independently explored variables that we though would have a strong naturally occurring relationship with `PctEmployed16_Over`, such as `PctUnemployed16_Over`. The plot above shows a strong negative relationship that could be utilized for an imputation step in a future recipe.
+
+
+## Conclusion
+From this analysis, we got a good understanding of the variables that had missingness that needs to be addressed in our recipe(s) and model development (2285 missing for `PctSomeCol18_24`, 152 missing for `PctEmployed16_Over`, and 609 missing for `PctPrivateCoverageAlone`). In addition, we investigated relationships between the response and predictor variables as well as between various predictor variables. This allowed us to pin-point variables of interest that will not only help us during our imputation step but also variables that will be integral in our model to predict the reseponse variable `TARGET_deathRate`.
+
+
+## Github Repo Link
+[https://github.com/STAT301III/final-project-youhere.git](https://github.com/STAT301III/final-project-youhere.git){target="_blank"}
